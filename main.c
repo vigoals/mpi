@@ -10,27 +10,37 @@
 #define BEGIN_NUM_TAG 4
 #define ANS_SIZE_TAG 5
 #define GENERATE_MAX 100
+#define GET_TIME(now) { \
+   struct timeval t; \
+   gettimeofday(&t, NULL); \
+   now = t.tv_sec + t.tv_usec/1000000.0; \
+}
+
+typedef double mtyp;
 
 int n0, m, n1;
 int task_id;
 int task_max;
 MPI_Comm comm;
-int * matrix2;
-int * matrix1;
-int * ans_mat;
+mtyp * matrix2;
+mtyp * matrix1;
+mtyp * ans_mat;
+mtyp * ans_mat_t;
 int my_begin_num;
 int my_ans_size;
 int * begin_nums;
 int * ans_size;
 
 void parallel_mm();
+void mm();
 void random_init();
-void fill_matrix_by_random(int * a, int count);
-void printf_matrix(int *a, int n, int m);
+void fill_matrix_by_random(mtyp * a, int count);
+void printf_matrix(mtyp *a, int n, int m);
 void compute_task_begin_num();
 
 int main(int argc, char* argv[]) {
 	int i, j, k;
+	double start_time, end_time;
 
 	MPI_Init(NULL, NULL);
 	comm = MPI_COMM_WORLD;
@@ -50,28 +60,30 @@ int main(int argc, char* argv[]) {
 	m = atoi(argv[2]);
 	n1 = atoi(argv[3]);
 
-	matrix1 = (int *)malloc(n0*m*sizeof(int));
-	matrix2 = (int *)malloc(m*n1*sizeof(int));
+	matrix1 = (mtyp *)malloc(n0*m*sizeof(mtyp));
+	matrix2 = (mtyp *)malloc(m*n1*sizeof(mtyp));
 	if (task_id == 0) {
 		random_init();
-		printf("Generate and send matrix2 %d*%d.\n", m, n1);
+		printf("Generate matrix1(%d*%d) and matrix2(%d*%d).\n", n0, m, m, n1);
 		fill_matrix_by_random(matrix1, n0*m);
 		fill_matrix_by_random(matrix2, m*n1);
 		//printf_matrix(matrix1, n0, m);
 		//printf_matrix(matrix2, m, n1);
+		
+		printf("Send matrix1 and matrix2.\n");
+		GET_TIME(start_time);
 		compute_task_begin_num();
-
 		my_begin_num = begin_nums[0];
 		my_ans_size = ans_size[0];
 		for (i=1; i<task_max; i++) {
-			MPI_Send(matrix1, n0*m, MPI_INT, i, MATRIX1_TAG, comm);
-			MPI_Send(matrix2, m*n1, MPI_INT, i, MATRIX2_TAG, comm);
+			MPI_Send(matrix1, n0*m, MPI_DOUBLE, i, MATRIX1_TAG, comm);
+			MPI_Send(matrix2, m*n1, MPI_DOUBLE, i, MATRIX2_TAG, comm);
 			MPI_Send(&begin_nums[i], 1, MPI_INT, i, BEGIN_NUM_TAG, comm);
 			MPI_Send(&ans_size[i], 1, MPI_INT, i, ANS_SIZE_TAG, comm);
 		}
 	} else {
-		MPI_Recv(matrix1, n0*m, MPI_INT, 0, MATRIX1_TAG, comm, MPI_STATUS_IGNORE);
-		MPI_Recv(matrix2, m*n1, MPI_INT, 0, MATRIX2_TAG, comm, MPI_STATUS_IGNORE);
+		MPI_Recv(matrix1, n0*m, MPI_DOUBLE, 0, MATRIX1_TAG, comm, MPI_STATUS_IGNORE);
+		MPI_Recv(matrix2, m*n1, MPI_DOUBLE, 0, MATRIX2_TAG, comm, MPI_STATUS_IGNORE);
 		MPI_Recv(&my_begin_num, 1, MPI_INT, 0, BEGIN_NUM_TAG, comm, MPI_STATUS_IGNORE);
 		MPI_Recv(&my_ans_size, 1, MPI_INT, 0, ANS_SIZE_TAG, comm, MPI_STATUS_IGNORE);
 	}
@@ -79,7 +91,12 @@ int main(int argc, char* argv[]) {
 	parallel_mm();
 
 	if (task_id == 0) {
+		double t;
+		GET_TIME(end_time);
+		t = end_time - start_time;
+		printf("Time used %.9fs.\n", t);
 		//printf_matrix(ans_mat, n0, n1);
+		mm();
 	}
 
 	MPI_Finalize();
@@ -89,13 +106,13 @@ int main(int argc, char* argv[]) {
 void random_init() {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
-	srandom((unsigned int)tv.tv_usec);
+	srand((unsigned int)tv.tv_usec);
 }
 
-void fill_matrix_by_random(int *a, int count) {
+void fill_matrix_by_random(mtyp *a, int count) {
 	int i;
 	for (i=0; i<count; i++)
-		a[i] = random() % GENERATE_MAX;
+		a[i] = (rand()/((double)RAND_MAX)*2 - 1)*GENERATE_MAX;
 }
 
 
@@ -115,11 +132,14 @@ void compute_task_begin_num() {
 }
 
 //未考虑并行
-void printf_matrix(int *a, int n, int m) {
+void printf_matrix(mtyp *a, int n, int m) {
 	int i,j;
 	for (i=0; i<n; i++) {
-		for (j=0; j<m; j++)
-			printf("%5d", a[i*m + j]);
+		for (j=0; j<m; j++) {
+			printf("%.5f", a[i*m + j]);
+			if (j != m - 1)
+				printf(", ");
+		}
 		printf("\n");
 	}
 	printf("[Size of matrix is %d*%d]\n", n, m);
@@ -127,7 +147,10 @@ void printf_matrix(int *a, int n, int m) {
 
 void parallel_mm() {
 	int i, j, k, an, l, c;
-	int * ans = (int *)malloc(my_ans_size*sizeof(int));
+	mtyp * ans = (mtyp *)malloc(my_ans_size*sizeof(mtyp));
+
+	if (task_id == 0)
+		printf("Begin Parallel mm.\n");
 
 	for (i=my_begin_num; i<my_begin_num + my_ans_size; i++) {
 		l = i/n1;
@@ -140,60 +163,33 @@ void parallel_mm() {
 	}
 
 	if (task_id == 0) {
-		ans_mat = (int *)malloc(n0*n1*sizeof(int));
-		memcpy(ans_mat, ans, my_ans_size*sizeof(int));
+		ans_mat = (mtyp *)malloc(n0*n1*sizeof(mtyp));
+		memcpy(ans_mat, ans, my_ans_size*sizeof(mtyp));
 
 		for (i=1; i<task_max; i++) {
-			MPI_Recv(ans_mat + begin_nums[i], ans_size[i], MPI_INT, i, ANS_TAG, comm, MPI_STATUS_IGNORE);
+			MPI_Recv(ans_mat + begin_nums[i], ans_size[i], MPI_DOUBLE, i, ANS_TAG, comm, MPI_STATUS_IGNORE);
 		}
 	} else {
-		MPI_Send(ans, my_ans_size, MPI_INT, 0, ANS_TAG, comm);
+		MPI_Send(ans, my_ans_size, MPI_DOUBLE, 0, ANS_TAG, comm);
 	}
 
-	/*
-	int i, j, k, ii, l;
-	int now = task_id;
-	int * matrix1 = (int *)malloc(m*sizeof(int));
-	int * ans;
-	int ans_size = n0/task_max;
-	if (task_id < n0%task_max)
-		ans_size++;
-	printf("Ans size of task %d is %d.\n", task_id, ans_size);
-	ans = (int *)malloc(n1*sizeof(int)*ans_size);
+}
 
-	//srandom((unsigned int)time(0));
-	for (i=0; i<ans_size; i++) {
-		for (j=0; j<m; j++)
-			matrix1[j] = random() % GENERATE_MAX;
+void mm() {
+	int i, j, k;
+	double start, end;
+	ans_mat_t = (mtyp *)malloc(n0*n1*sizeof(mtyp));
 
-		//l = i*task_max + task_id;
-		//printf("Task %d process line %d.\n", task_id, l);
-
-		for (ii=0; ii<n1; ii++) {
-			k = 0;
-			for (j=0; j<m; j++)
-				k += matrix1[j]*matrix2[j*n1 + ii];
-			ans[i*n1 + ii] = k;
+	printf("Begin mm.\n");
+	GET_TIME(start);
+	for (i=0; i<n0; i++) {
+		for (j=0; j<n1; j++) {
+			ans_mat_t[i*n1 + j] = 0;
+			for (k=0; k<m; k++)
+				ans_mat_t[i*n1 + j] += matrix1[i*m + k]*matrix2[k*n1 + j];
 		}
 	}
-
-	if (task_id != 0) {
-		MPI_Send(ans, n1*ans_size, MPI_INT, 0, ANS_TAG, comm);
-	} else { //recv all answer
-		int * ans_recv;
-		int as = n0/task_max;
-		int * ans_all;
-
-		for (i=1; i<task_max; i++) {
-			int as_temp = as;
-			if (i < n0%task_max)
-				as_temp++;
-			ans_recv = (int *)malloc(n1*as_temp*sizeof(int));
-			MPI_Recv(ans, n1*as_temp, MPI_INT, i, ANS_TAG, comm, MPI_STATUS_IGNORE);
-			printf("Recv %d answers from %d.\n", as_temp, i);
-			free(ans_recv);
-		}
-	}
-	free(ans);
-	*/
+	GET_TIME(end);
+	//printf_matrix(ans_mat_t, n0, n1);
+	printf("Time used by mm: %.9f.\n", end - start);
 }
