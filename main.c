@@ -67,7 +67,9 @@ int main(int argc, char* argv[]) {
 		printf("Generate matrix1(%d*%d) and matrix2(%d*%d).\n", n0, m, m, n1);
 		fill_matrix_by_random(matrix1, n0*m);
 		fill_matrix_by_random(matrix2, m*n1);
+		//printf("Matrix1:\n");
 		//printf_matrix(matrix1, n0, m);
+		//printf("Matrix2:\n");
 		//printf_matrix(matrix2, m, n1);
 		
 		printf("Send matrix1 and matrix2.\n");
@@ -88,13 +90,14 @@ int main(int argc, char* argv[]) {
 		MPI_Recv(&my_ans_size, 1, MPI_INT, 0, ANS_SIZE_TAG, comm, MPI_STATUS_IGNORE);
 	}
 
-	parallel_mm();
+	//parallel_mm();
 
 	if (task_id == 0) {
 		double t;
 		GET_TIME(end_time);
 		t = end_time - start_time;
-		printf("Time used %.9fs.\n", t);
+		printf("Time used by parallel mm is %.9fs.\n", t);
+		//printf("Ans matrix by parallel mm:\n");
 		//printf_matrix(ans_mat, n0, n1);
 		mm();
 	}
@@ -160,9 +163,14 @@ void parallel_mm() {
 		for (j=0; j<m; j++)
 			ans[i - my_begin_num] += matrix1[l*m + j]*matrix2[j*n1 + c];
 		//printf("Task %d process ans %d(%d, %d), ans is %d.\n", task_id, i, l, c, ans[i - my_begin_num]);
+
+		/*if (task_id ==0) {
+			printf("\r[Run %d of %d.]", i - my_begin_num, my_ans_size);
+		}*/
 	}
 
 	if (task_id == 0) {
+		printf("\n");
 		ans_mat = (mtyp *)malloc(n0*n1*sizeof(mtyp));
 		memcpy(ans_mat, ans, my_ans_size*sizeof(mtyp));
 
@@ -178,18 +186,25 @@ void parallel_mm() {
 void mm() {
 	int i, j, k;
 	double start, end;
+	int p_all, p_go;
 	ans_mat_t = (mtyp *)malloc(n0*n1*sizeof(mtyp));
 
 	printf("Begin mm.\n");
 	GET_TIME(start);
+	p_all = n0*n1;
+	p_go = 0;
 	for (i=0; i<n0; i++) {
 		for (j=0; j<n1; j++) {
 			ans_mat_t[i*n1 + j] = 0;
 			for (k=0; k<m; k++)
 				ans_mat_t[i*n1 + j] += matrix1[i*m + k]*matrix2[k*n1 + j];
 		}
+		p_go += n1;
+		//printf("\r[%2.2f%%]", p_go/((double)p_all)*100);
 	}
 	GET_TIME(end);
+	printf("\nTime used by mm: %.9f.\n", end - start);
+	//printf("Ans matrix by mm:\n");
 	//printf_matrix(ans_mat_t, n0, n1);
-	printf("Time used by mm: %.9f.\n", end - start);
 }
+
